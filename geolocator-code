@@ -1,0 +1,72 @@
+import geopy
+import pandas as pd
+import numpy as np
+import sklearn.neighbors
+import dedupe
+from geopy.geocoders import nominatim
+from geopy import distance
+from geopy.extra.rate_limiter import RateLimiter
+from geopy.distance import geodesic
+import haversine as hs
+from haversine import Unit
+from unidecode import unidecode
+
+
+#download a file that has both work and home address information
+df = pd.read_excel('name of file.xlsx')
+
+df['work_address'] = df.loc[:,"Work Add"]
+df['home_address'] = df.loc[:,"Home Add"]
+
+#setting up geolocator
+geolocator = Nominatim(timeout=10, user_agent="my-geolocator")
+geocode = RateLimiter(geolocator.geocode, min_delay_seconds=1)
+
+#getting latitude and longitude from work address
+df['gcodehome'] = df.work_address.apply(geolocator.geocode)
+
+df['worklat'] = [g.latitude for g in df.gcodework]
+df['worklong'] = [g.longitude for g in df.gcodework]
+
+#getting latitude and longitude for home address
+df['gcodehome'] = df.home_address.apply(geolocator.geocode)
+
+df['homelat'] = [g.latitude if g is not None else None for g in df.gcodehome]
+df['homelong'] = [g.longitude if g is not None else None for g in df.gcodehome]
+
+
+##concatenating the long and lat - home address
+df['homeloc'] = df['homelat'].map(str) + "," + df['homelong'].map(str)
+
+#concatenating long and lat - work address
+df['homeloc'] = df['worklat'].map(str) + "," + df['worklong'].map(str)
+
+#converting lat and long to radians
+df[['lat_radians_home','long_radians_home']] = (np.radians(df.loc[:,['homelat','homelong']]))
+df[['lat_radians_work','long_radians_work']] = (np.radians(df.loc[:,['worklat','worklong']]))
+
+#calculating the distance in miles between locations using haversine formula
+df = df.fillna(0)  #replace NaN values with 0
+
+dist = sklearn.neighbors.DistanceMetric.get_metric('haversine')
+
+dist_matrix = (dist.pairwise
+               (df[['lat_radians_home','long_radians_home']],
+                df[['lat_radians_work','long_radians_work']])*3959
+               )
+#note that 3959 is the radius of the earth in miles
+
+df_dist_matrix = (
+    pd.DataFrame(dist_matrix, index=df['Home City'],
+                 columns=df['Work City'])
+    )
+
+#converting matrix into list
+df_dist_long = (pd.melt(df_dist_matrix.reset_index(), id_vars='Home City'))
+df_dist_long = df_dist_long.rename(columns={'value':'miles'})
+
+#dedupe
+final_df = df_dist_long.drop_duplicates()
+
+#export to excel
+final_df.to_excel('distance in miles.xlsx', sheet_name='sheet1', index=False)
